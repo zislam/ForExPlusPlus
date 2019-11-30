@@ -24,8 +24,10 @@
 package weka.classifiers.meta;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Vector;
 
@@ -41,6 +43,8 @@ import weka.core.TechnicalInformation.Field;
 import weka.core.TechnicalInformation.Type;
 import java.util.regex.*;  
 import weka.classifiers.trees.J48;
+import weka.core.SelectedTag;
+import weka.core.Tag;
 import weka.core.Utils;
 
 /**
@@ -85,6 +89,20 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     private boolean printClassifier = false;
     
     private boolean removeZeroCoverageRules = true;
+    
+    private boolean groupRulesViaClassValue = true;
+    
+    public static final int SORT_ACCURACY = 1;
+    public static final int SORT_COVERAGE = 2;
+    public static final int SORT_LENGTH = 3;
+    
+    public static final Tag[] TAGS_SORT = {
+        new Tag(SORT_ACCURACY, "Sort by rule accuracy."),
+        new Tag(SORT_COVERAGE, "Sort by rule coverage."),
+        new Tag(SORT_LENGTH, "Sort by rule length.")
+    };
+    
+    protected int sortType = SORT_ACCURACY;
 
     /**
     * Default constructor.
@@ -113,6 +131,23 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     public void setOptions(String[] options) throws Exception {
         printClassifier = Utils.getFlag("P", options);
         removeZeroCoverageRules = Utils.getFlag("Z", options);
+        
+        String sortString = Utils.getOption('E', options);
+        if(sortString.length() != 0) {
+            if(sortString.equals("acc")) {
+                setSortType(new SelectedTag(SORT_ACCURACY, TAGS_SORT));
+            }
+            else if(sortString.equals("cov")) {
+                setSortType(new SelectedTag(SORT_COVERAGE, TAGS_SORT));
+            }
+            else if(sortString.equals("len")) {
+                setSortType(new SelectedTag(SORT_LENGTH, TAGS_SORT));
+            }
+            else {
+                throw new IllegalArgumentException("Invalid sort method.");
+            }
+        }
+        
         super.setOptions(options);
     }
 
@@ -130,6 +165,19 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         
         if(removeZeroCoverageRules)
             result.add("-Z");
+        
+        result.add("-E");
+        switch(sortType) {
+            case SORT_ACCURACY:
+                result.add("acc");
+                break;
+            case SORT_COVERAGE:
+                result.add("cov");
+                break;
+            case SORT_LENGTH:
+                result.add("len");
+                break;
+        }
 
         Collections.addAll(result, super.getOptions());
 
@@ -341,7 +389,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
 
                     //set up the rule and add it to the vector
                     Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
-                            predictedClass, classPredictedText, classDistribution);
+                            predictedClass, classPredictedText, classDistribution, sortType);
 //                    System.out.println("Rule " + i);
 //                    System.out.println(theRule);
                     ruleVec.add(theRule);
@@ -464,7 +512,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         if (finalRules != null) {
              
             StringBuilder out = new StringBuilder("");
-            out.append(finalRules.toString());
+            out.append(finalRules.toString(groupRulesViaClassValue));
             
             if(printClassifier) {
                 out.append("\n").append(m_Classifier.toString());
@@ -497,7 +545,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         return newVector.elements();
     }
     
-    private class Rule implements Serializable {
+    private class Rule implements Serializable, Comparable {
 
         private static final long serialVersionUID = -5891208000957072995L;
 
@@ -508,9 +556,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         private final int predictedClass;
         private final String predictedClassLabel;
         private final double[] classDistribution;
+        private final int sortMethod;
         
         public Rule(String ruleText, double accuracy, double coverage, int length,
-                    int predictedClass, String predictedClassLabel, double[] classDistribution) {
+                    int predictedClass, String predictedClassLabel, double[] classDistribution,
+                    int sortMethod) {
             this.ruleText = ruleText;
             this.accuracy = accuracy;
             this.coverage = coverage;
@@ -518,6 +568,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             this.predictedClass = predictedClass;
             this.predictedClassLabel = predictedClassLabel;
             this.classDistribution = classDistribution;
+            this.sortMethod = sortMethod;
         }
         
         public String getRuleText() {
@@ -540,6 +591,10 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return predictedClass;
         }
         
+        public String getPredictedClassLabel() {
+            return predictedClassLabel;
+        }
+        
         public double[] getClassDistribution() {
             return classDistribution;
         }
@@ -549,20 +604,44 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             StringBuilder outString = new StringBuilder(ruleText).append(": ")
                     .append(predictedClassLabel);
             
-            /*if(classDistribution != null) {
-                outString.append(" {");
-                for(int i = 0; i < classDistribution.length; i++) {
-                    outString.append(i).append(",").append(classDistribution[i]).append(";");
-                }
-                outString.append("}");
-            }*/
-            
-            
             outString.append(". Confidence: ").append(String.format("%.3f", accuracy))
                     .append("; Coverage: ").append(String.format("%.3f", coverage))
                     .append(";");
             
             return outString.toString();
+        }
+
+        @Override
+        public int compareTo(Object o) {
+            
+            Rule other = (Rule)o;
+            
+            switch(sortMethod) {
+            case SORT_ACCURACY:
+                if(accuracy > other.getAccuracy())
+                    return 1;
+                else if(accuracy < other.getAccuracy())
+                    return -1;
+                else
+                    return 0;
+            case SORT_COVERAGE:
+                if(coverage > other.getAccuracy())
+                    return 1;
+                else if(coverage < other.getAccuracy())
+                    return -1;
+                else
+                    return 0;
+            case SORT_LENGTH:
+                if(length > other.getAccuracy())
+                    return 1;
+                else if(length < other.getAccuracy())
+                    return -1;
+                else
+                    return 0;
+            }
+            
+            return 0;
+            
         }
         
     }
@@ -702,17 +781,65 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
-        @Override
-        public String toString() {
+        public String toString(boolean group) {
             
             StringBuilder out = new StringBuilder("ForEx++ Rules:\n");
             
-            for(Rule r : rules) {
-                out.append(r.toString()).append("\n");
+            if(!group) {
+                
+                ArrayList<Rule> ruleList = new ArrayList<>();
+                for(Rule r : rules) {
+                    ruleList.add(r);
+                }
+                
+                Collections.sort(ruleList, Collections.reverseOrder());
+                
+                for(Rule r : ruleList) {
+                    out.append(r.toString()).append("\n");
+                }
             }
+            else { //group by class values
+                
+                HashMap<String, ArrayList<Rule>> classMap = new HashMap<>();
+                
+                //add all the rules to a corresponding class vector
+                for(Rule r : rules) {
+                    
+                    if(!classMap.containsKey(r.getPredictedClassLabel())) {
+                        classMap.put(r.getPredictedClassLabel(), new ArrayList<>());
+                    }
+                    
+                    classMap.get(r.getPredictedClassLabel()).add(r);
+                    
+                } 
+                
+                //iterate over these classes individually and add to the output
+                for(String k : classMap.keySet()) {
+                    
+                    out.append("Rules for class value ").append(k).append(": \n");
+                    
+                    Collections.sort(classMap.get(k), Collections.reverseOrder());
+                    
+                    for (Rule rule : classMap.get(k)) {
+                        
+                        out.append(rule.toString()).append("\n");
+                        
+                    }
+                    
+                    out.append("\n\n");
+                    
+                }
+                
+            } //end grouping
             
             return out.toString();
         }
+        
+        @Override
+        public String toString() {
+            return toString(false);
+        }
+        
          
        
     }
@@ -739,6 +866,32 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
 
     public String removeZeroCoverageRulesTipText() {
         return "Whether to remove rules with no coverage before calculating mean coverage, support, and rule length.";
+    }
+    
+    public boolean isGroupRulesViaClassValue() {
+        return groupRulesViaClassValue;
+    }
+
+    public void setGroupRulesViaClassValue(boolean groupRulesViaClassValue) {
+        this.groupRulesViaClassValue = groupRulesViaClassValue;
+    }
+
+    public String groupRulesViaClassValueText() {
+        return "Whether to group rules via their class values.";
+    }
+    
+    public SelectedTag getSortType() {
+        return new SelectedTag(sortType, TAGS_SORT);
+    }
+    
+    public void setSortType(SelectedTag newSortType) {
+        if(newSortType.getTags() == TAGS_SORT) {
+            sortType = newSortType.getSelectedTag().getID();
+        }
+    }
+    
+    public String sortTypeTipText() {
+        return "Method to sort the rules when displayed.";
     }
 
 }
