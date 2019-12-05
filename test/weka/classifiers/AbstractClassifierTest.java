@@ -517,7 +517,7 @@ public abstract class AbstractClassifierTest extends TestCase {
    * tests whether classifier handles N classes
    * 
    * @see CheckClassifier#canHandleNClasses(boolean, boolean, boolean, boolean,
-   *      boolean, boolea , int)
+   *      boolean, boolean, int)
    * @see CheckClassifier#testsPerClassType(int, boolean, boolean, boolean)
    * @see #m_NClasses
    */

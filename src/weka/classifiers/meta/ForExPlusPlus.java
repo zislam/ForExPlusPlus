@@ -244,16 +244,13 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             //get rules with higher than average mean
             double meanAccuracy = rulesForClass.meanAccuracy();
-            //System.out.println("Class: "+data.classAttribute().value(i)+" mean accuracy: "+meanAccuracy);
             RuleCollection rAcc = rulesForClass.getRulesGEQAccuracy(meanAccuracy);
             
             //get rules with higher than average coverage
             double meanCoverage = rulesForClass.meanCoverage();
-            //System.out.println("Class: "+data.classAttribute().value(i)+" mean coverage: "+meanCoverage);
             RuleCollection rCov = rulesForClass.getRulesGEQCoverage(meanCoverage);
 
             double meanRuleLength = rulesForClass.meanRuleLength();
-            //System.out.println("Class: "+data.classAttribute().value(i)+" mean rule length: "+meanRuleLength);
             RuleCollection rLen = rulesForClass.getRulesLEQLength(meanRuleLength);
             
             RuleCollection rAccCovLen = rAcc.intersection(rCov).intersection(rLen);
@@ -265,7 +262,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         //combine into the ForEx++ result set
         finalRules = intersections[0];
         for(int i = 1; i < intersections.length; i++) {
-            finalRules = finalRules.merge(intersections[1]);
+            finalRules = finalRules.merge(intersections[i]);
         }
         
 
@@ -390,25 +387,21 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                     //set up the rule and add it to the vector
                     Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
                             predictedClass, classPredictedText, classDistribution, sortType);
-//                    System.out.println("Rule " + i);
-//                    System.out.println(theRule);
                     ruleVec.add(theRule);
                 }
                 catch(Exception e) {
-                    //System.out.println(leaves[i]);
+                    System.out.println(leaves[i]);
                 }
             }
         }
         
-//        System.out.println("Rule hash set: "+ruleVec);
         
         return new RuleCollection(ruleVec);
         
     }
 
     /**
-     * Returns the distribution of tree votes for the available classes,
-     * classifying using majority voting.
+     * Passes the classification through to the built SysFor
      *
      * @param instance - the instance to be classified
      * @return probablity distribution for this instance's classification
@@ -429,14 +422,6 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      */
     public static void main(String[] argv) throws Exception {
         runClassifier(new ForExPlusPlus(), argv);
-//        Evaluation.evaluateModel(new ForExPlusPlus(), argv);
-//        DataSource source = new DataSource("/home/michael/sync/RA/Datasets/cmc.arff");
-//        Instances instances = source.getDataSet();
-//        instances.setClassIndex(instances.numAttributes()-1);
-//        ForExPlusPlus fepp = new ForExPlusPlus();
-//        fepp.setOptions(argv);
-//        fepp.buildClassifier(instances);
-//        System.out.println(fepp.toString());
     }
 
     /**
@@ -539,6 +524,9 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         newVector.addElement(new Option("\tWhether to remove rules with no coverage"
                 + "before calculating mean coverage, support, and rule length.\n"
                 + "\t(default false)", "P", 0, "-P"));
+        newVector.addElement(new Option("\tSort Method for Displaying Rules.\n"
+                + "\t(Default = sort by rule accuracy)",
+                  "E", 1, "-E <acc | cov | len>"));
 
         newVector.addAll(Collections.list(super.listOptions()));
 
@@ -654,9 +642,6 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         private final HashSet<Rule> rules;
 
         public RuleCollection(HashSet<Rule> rules) {
-//            for(Rule r : rules) {
-//                System.out.println(r);
-//            }
             this.rules = rules;
         }
         
@@ -668,10 +653,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             double mean = 0;
             
-            //System.out.println(rules);
                         
             for(Rule r : rules) {
-            //    System.out.println(r);
                 mean += r.getAccuracy();
             }
             
@@ -876,7 +859,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         this.groupRulesViaClassValue = groupRulesViaClassValue;
     }
 
-    public String groupRulesViaClassValueText() {
+    public String groupRulesViaClassValueTipText() {
         return "Whether to group rules via their class values.";
     }
     
