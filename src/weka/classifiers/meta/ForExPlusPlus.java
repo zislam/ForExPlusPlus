@@ -24,6 +24,7 @@
 package weka.classifiers.meta;
 
 import java.io.Serializable;
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -51,7 +52,7 @@ import weka.core.Utils;
  * <!-- globalinfo-start -->
  * Implementation of the knowledge discovery framework ForEx++, which was
  * published in:<br>
- * <br>adult.arff
+ * <br>
  * Md Nasim Adnan and Md Zahidul Islam: ForEx++: A New Framework for Knowledge
  * Discovery from Decision Forests In: Australasian Journal of Information 
  * Systems Vol 21, 2017.<br>
@@ -59,7 +60,54 @@ import weka.core.Utils;
  * This algorithm processes a SysFor forest and provides a list of high-quality
  * rules that account for each class.
  * <!-- globalinfo-end -->
+ * 
+ * <!-- options-start --> Valid options are:
+ * <p/>
+ * 
+ * <pre>
+ * -P
+ *  Whether to print the SysFor that the ForEx++ rules were selected from
+ *  (default false)
+ * </pre>
+ * 
+ * <pre>
+ * -Z
+ *  Whether to remove rules with no coverage before calculating mean coverage, 
+ *  support, and rule length
+ *  (default true)
+ * </pre>
+ * 
+ * <pre>
+ * -GC
+ *  Whether to group rules by class value in the final output.
+ *  (default true)
+ * </pre>
+ * 
+ * <pre>
+ * -E &lt;acc | cov | len&gt;
+ *  Sort Method for Displaying Rules.
+ *  (Default = sort by rule accuracy)
+ * </pre>
+ * 
+ * <pre>
+ * -UA
+ *  Whether to use accuracy in selecting ForEx++ rules
+ *  (default true)
+ * </pre>
  *
+ * <pre>
+ * -UC
+ *  Whether to use coverage in selecting ForEx++ rules
+ *  (default true)
+ * </pre>
+ * 
+ * <pre>
+ * -UR
+ *  Whether to use rule length in selecting ForEx++ rules
+ *  (default true)
+ * </pre>
+ *
+ * <!-- options-end -->
  *
  * @author Michael Furner
  * @version $Revision: 1.0$
@@ -72,11 +120,6 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     private static final long serialVersionUID = -589120800957072995L;
 
     /**
-     * The classifier, which must be a SysFor. 
-     */
-//    protected Classifier m_Classifier = new SysFor();
-
-    /**
      * All of the rules extracted from the Decision Forest
      */
     protected RuleCollection extractedRules = null;
@@ -86,11 +129,23 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      */
     protected RuleCollection finalRules = null;
     
+    /** Whether to print the classifier as well as ForEx++ rules */
     private boolean printClassifier = false;
     
+    /** Whether to remove rules with no coverage before calculating mean coverage, support, and rule length */
     private boolean removeZeroCoverageRules = true;
     
+    /** Whether to group rules by class value in the final output. */
     private boolean groupRulesViaClassValue = true;
+    
+    /** Whether to use accuracy in selecting ForEx++ rules */
+    private boolean useAccuracy = true;
+    
+    /** Whether to use coverage in selecting ForEx++ rules */
+    private boolean useCoverage = true;
+    
+    /** Whether to use rule length in selecting ForEx++ rules */
+    private boolean useRuleLength = true;
     
     public static final int SORT_ACCURACY = 1;
     public static final int SORT_COVERAGE = 2;
@@ -102,6 +157,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         new Tag(SORT_LENGTH, "Sort by rule length.")
     };
     
+    /** Sort Method for Displaying Rules */
     protected int sortType = SORT_ACCURACY;
 
     /**
@@ -123,7 +179,56 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
 
     
     /**
-     * Set the options for ForEx++. The only options are the SysFor parameters.
+     * Parse the options for ForEx++.
+     * 
+     * * <!-- options-start --> Valid options are:
+     * <p/>
+     * 
+     * <pre>
+     * -P
+     *  Whether to print the SysFor that the ForEx++ rules were selected from
+     *  (default false)
+     * </pre>
+     * 
+     * <pre>
+     * -Z
+     *  Whether to remove rules with no coverage before calculating mean coverage, 
+     *  support, and rule length
+     *  (default true)
+     * </pre>
+     * 
+     * <pre>
+     * -GC
+     *  Whether to group rules by class value in the final output.
+     *  (default true)
+     * </pre>
+     * 
+     * <pre>
+     * -E &lt;acc | cov | len&gt;
+     *  Sort Method for Displaying Rules.
+     *  (Default = sort by rule accuracy)
+     * </pre>
+     * 
+     * <pre>
+     * -UA
+     *  Whether to use accuracy in selecting ForEx++ rules
+     *  (default true)
+     * </pre>
+     *
+     * <pre>
+     * -UC
+     *  Whether to use coverage in selecting ForEx++ rules
+     *  (default true)
+     * </pre>
+     * 
+     * <pre>
+     * -UR
+     *  Whether to use rule length in selecting ForEx++ rules
+     *  (default true)
+     * </pre>
+     *
+     * <!-- options-end -->
+     * 
      * @param options
      * @throws Exception
      */
@@ -131,6 +236,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     public void setOptions(String[] options) throws Exception {
         printClassifier = Utils.getFlag("P", options);
         removeZeroCoverageRules = Utils.getFlag("Z", options);
+        groupRulesViaClassValue = Utils.getFlag("GC", options);
         
         String sortString = Utils.getOption('E', options);
         if(sortString.length() != 0) {
@@ -147,6 +253,10 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                 throw new IllegalArgumentException("Invalid sort method.");
             }
         }
+        
+        useAccuracy = Utils.getFlag("UA", options);
+        useCoverage = Utils.getFlag("UC", options);
+        useRuleLength = Utils.getFlag("UR", options);
         
         super.setOptions(options);
     }
@@ -166,6 +276,9 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         if(removeZeroCoverageRules)
             result.add("-Z");
         
+        if(groupRulesViaClassValue)
+            result.add("-GC");
+        
         result.add("-E");
         switch(sortType) {
             case SORT_ACCURACY:
@@ -177,6 +290,16 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             case SORT_LENGTH:
                 result.add("len");
                 break;
+        }
+        
+        if(useAccuracy) {
+            result.add("-UA");
+        }
+        if(useCoverage) {
+            result.add("-UC");
+        }
+        if(useRuleLength) {
+            result.add("-UR");
         }
 
         Collections.addAll(result, super.getOptions());
@@ -199,22 +322,15 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         data = new Instances(data);
 
         //ensure the classifier is a SysFor
-        if(m_Classifier.getClass().getName() != "weka.classifiers.trees.SysFor") {
+        if(m_Classifier.getClass().getName() != "weka.classifiers.trees.SysFor" ||
+           data.numAttributes() == 1 || //dataset with only one attribute
+           (!useAccuracy && !useCoverage && !useRuleLength) //invalid options
+        ) {
             J48 useless = new J48();
             useless.buildClassifier(data);
             m_Classifier = useless;
             return;
         }
-        
-        
-        //if this is a dataset with only the class attribute
-        if (data.numAttributes() == 1) {
-            J48 useless = new J48();
-            useless.buildClassifier(data);
-            m_Classifier = useless;
-            return;
-        }
-        
         
         //build SysFor
         m_Classifier.buildClassifier(data);
@@ -241,21 +357,30 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         for(int i = 0; i < data.classAttribute().numValues(); i++) {
             
             RuleCollection rulesForClass = extractedRules.getRulesByClass(i);
+            RuleCollection intersection = rulesForClass;
             
-            //get rules with higher than average mean
-            double meanAccuracy = rulesForClass.meanAccuracy();
-            RuleCollection rAcc = rulesForClass.getRulesGEQAccuracy(meanAccuracy);
+            if(useAccuracy) {
+                //get rules with higher than average mean
+                double meanAccuracy = rulesForClass.meanAccuracy();
+                RuleCollection rAcc = rulesForClass.getRulesGEQAccuracy(meanAccuracy);
+                intersection = intersection.intersection(rAcc);
+            }
             
-            //get rules with higher than average coverage
-            double meanCoverage = rulesForClass.meanCoverage();
-            RuleCollection rCov = rulesForClass.getRulesGEQCoverage(meanCoverage);
-
-            double meanRuleLength = rulesForClass.meanRuleLength();
-            RuleCollection rLen = rulesForClass.getRulesLEQLength(meanRuleLength);
-            
-            RuleCollection rAccCovLen = rAcc.intersection(rCov).intersection(rLen);
-            
-            intersections[i] = rAccCovLen;
+            if(useCoverage) {
+                //get rules with higher than average coverage
+                double meanCoverage = rulesForClass.meanCoverage();
+                RuleCollection rCov = rulesForClass.getRulesGEQCoverage(meanCoverage);
+                intersection = intersection.intersection(rCov);
+            }
+             
+            if(useRuleLength) {
+                //get rules with less than average length
+                double meanRuleLength = rulesForClass.meanRuleLength();
+                RuleCollection rLen = rulesForClass.getRulesLEQLength(meanRuleLength);
+                intersection = intersection.intersection(rLen);
+            }
+                        
+            intersections[i] = intersection;
             
         }
         
@@ -420,7 +545,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      * @param argv should contain the following arguments: -t training file [-T
      * test file] [-c class index]
      */
-    public static void main(String[] argv) throws Exception {
+    public static void main(String[] argv) {
         runClassifier(new ForExPlusPlus(), argv);
     }
 
@@ -505,8 +630,16 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         
             return out.toString();
         }
-        else 
-            return "ForEx++ not built!\nWeka ForEx++ can currently only parse SysFor.";
+        else {
+            if(!useAccuracy && !useCoverage && ! useRuleLength) {
+                return "ForEx++ not built!\nSelect at least one criteria by "
+                        + "which to select rules (accuracy, coverage, or rule "
+                        + "length).";
+            }
+            else {
+                return "ForEx++ not built!\nWeka ForEx++ can currently only parse SysFor.";
+            }
+        }
 
     }
 
@@ -523,10 +656,22 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                 + "\t(default false)", "P", 0, "-P"));
         newVector.addElement(new Option("\tWhether to remove rules with no coverage"
                 + "before calculating mean coverage, support, and rule length.\n"
-                + "\t(default false)", "P", 0, "-P"));
+                + "\t(default true)", "Z", 0, "-Z"));
+        newVector.addElement(new Option("\tWhether to group rules by class value "
+                + "in the final output.\n"
+                + "\t(default true)", "GC", 0, "-GC"));
         newVector.addElement(new Option("\tSort Method for Displaying Rules.\n"
                 + "\t(Default = sort by rule accuracy)",
                   "E", 1, "-E <acc | cov | len>"));
+        newVector.addElement(new Option("\tWhether to use accuracy in selecting  "
+                + "ForEx++ rules.\n"
+                + "\t(default true)", "UA", 0, "-UA"));
+        newVector.addElement(new Option("\tWhether to use coverage in selecting  "
+                + "ForEx++ rules.\n"
+                + "\t(default true)", "UC", 0, "-UC"));
+        newVector.addElement(new Option("\tWhether to use rule length in "
+                + "selecting ForEx++ rules.\n"
+                + "\t(default true)", "UR", 0, "-UR"));
 
         newVector.addAll(Collections.list(super.listOptions()));
 
@@ -564,11 +709,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         public double getAccuracy() {
-            return accuracy;
+            return Math.round(accuracy*100000.0)/100000.0;
         }
         
         public double getCoverage() {
-            return coverage;
+            return Math.round(coverage*100000.0)/100000.0;
         }
         
         public int getLength() {
@@ -660,7 +805,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             mean /= rules.size();
             
-            return mean;
+            return Math.round(mean*100000.0)/100000.0; //round to five dec places
             
         }
         
@@ -674,7 +819,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             mean /= rules.size();
             
-            return mean;
+            return Math.round(mean*100000.0)/100000.0; //round to five dec places
             
         }
         
@@ -688,7 +833,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             mean /= rules.size();
             
-            return mean;
+            return Math.round(mean*100000.0)/100000.0; //round to five dec places
             
         }
         
@@ -827,54 +972,175 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
        
     }
      
+    /**
+     * Get whether to print the classifier
+     * @return whether to print the classifier
+     */
     public boolean isPrintClassifier() {
         return printClassifier;
     }
 
+    /**
+     * Set whether to print the classifier
+     * @param printClassifier
+     */
     public void setPrintClassifier(boolean printClassifier) {
         this.printClassifier = printClassifier;
     }
     
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
     public String printClassifierTipText() {
         return "Whether to print the SysFor that the ForEx++ rules were selected from.";
     }
     
+    /**
+     * Return whether to remove rules with no coverage before calculating mean
+     * coverage, support, and rule length
+     * @return whether to remove rules with no coverage before calculations
+     */
     public boolean isRemoveZeroCoverageRules() {
         return removeZeroCoverageRules;
     }
 
+    /**
+     * Set whether to remove rules with no coverage before calculations
+     * @param removeZeroCoverageRules
+     */
     public void setRemoveZeroCoverageRules(boolean removeZeroCoverageRules) {
         this.removeZeroCoverageRules = removeZeroCoverageRules;
     }
 
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
     public String removeZeroCoverageRulesTipText() {
         return "Whether to remove rules with no coverage before calculating mean coverage, support, and rule length.";
     }
     
+    /**
+     * Return whether to group rules by class value in the final output.
+     * @return Whether to group rules by class value in the final output.
+     */
     public boolean isGroupRulesViaClassValue() {
         return groupRulesViaClassValue;
     }
 
+    /**
+     * Set whether to group rules by class value in the final output.
+     * @param groupRulesViaClassValue
+     */
     public void setGroupRulesViaClassValue(boolean groupRulesViaClassValue) {
         this.groupRulesViaClassValue = groupRulesViaClassValue;
     }
 
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
     public String groupRulesViaClassValueTipText() {
         return "Whether to group rules via their class values.";
     }
     
+    /**
+     * Return sort method for displaying rules
+     * @return sort method for displaying rules
+     */
     public SelectedTag getSortType() {
         return new SelectedTag(sortType, TAGS_SORT);
     }
     
+    /**
+     * Set sort method for displaying rules
+     * @param newSortType
+     */
     public void setSortType(SelectedTag newSortType) {
         if(newSortType.getTags() == TAGS_SORT) {
             sortType = newSortType.getSelectedTag().getID();
         }
     }
     
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
     public String sortTypeTipText() {
         return "Method to sort the rules when displayed.";
     }
+    
+    /**
+     * Return whether to use accuracy in selecting ForEx++ rules
+     * @return whether to use accuracy in selecting ForEx++ rules
+     */
+    public boolean getUseAccuracy() {
+        return useAccuracy;
+    }
+    
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
+    public String useAccuracyTipText() {
+        return "Whether or not to include accuracy in the intersection of useful rules.";
+    }
+    
+    /**
+     * Set whether to use accuracy in selecting ForEx++ rules
+     * @param useAccuracy
+     */
+    public void setUseAccuracy(boolean useAccuracy) {
+        this.useAccuracy = useAccuracy;
+    }
+    
+    /**
+     * Return whether to use coverage in selecting ForEx++ rules
+     * @return whether to use coverage in selecting ForEx++ rules
+     */
+    public boolean getUseCoverage() {
+        return useCoverage;
+    }
 
+    /**
+     * Set whether to use coverage in selecting ForEx++ rules
+     * @param useCoverage
+     */
+    public void setUseCoverage(boolean useCoverage) {
+        this.useCoverage = useCoverage;
+    }
+        
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
+    public String useCoverageTipText() {
+        return "Whether or not to include coverage in the intersection of useful rules.";
+    }
+    
+    /**
+     * Return whether to use rule length in selecting ForEx++ rules
+     * @return whether to use rule length in selecting ForEx++ rules
+     */
+    public boolean getUseRuleLength() {
+        return useRuleLength;
+    }
+    
+    /**
+     * Set whether to use rule length in selecting ForEx++ rules
+     * @param useRuleLength
+     */
+    public void setUseRuleLength(boolean useRuleLength) {
+        this.useRuleLength = useRuleLength;
+    }
+
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
+    public String useRuleLengthTipText() {
+        return "Whether or not to include rule length in the intersection of useful rules.";
+    }
+    
 }
