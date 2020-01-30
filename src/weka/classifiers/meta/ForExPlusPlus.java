@@ -44,6 +44,7 @@ import weka.core.TechnicalInformation.Field;
 import weka.core.TechnicalInformation.Type;
 import java.util.regex.*;  
 import weka.classifiers.trees.J48;
+import weka.classifiers.trees.RandomForest;
 import weka.core.SelectedTag;
 import weka.core.Tag;
 import weka.core.Utils;
@@ -57,7 +58,7 @@ import weka.core.Utils;
  * Discovery from Decision Forests In: Australasian Journal of Information 
  * Systems Vol 21, 2017.<br>
  * <br>
- * This algorithm processes a SysFor forest and provides a list of high-quality
+ * This algorithm processes a decision forest and provides a list of high-quality
  * rules that account for each class.
  * <!-- globalinfo-end -->
  * 
@@ -66,7 +67,7 @@ import weka.core.Utils;
  * 
  * <pre>
  * -P
- *  Whether to print the SysFor that the ForEx++ rules were selected from
+ *  Whether to print the decision forest that the ForEx++ rules were selected from
  *  (default false)
  * </pre>
  * 
@@ -147,10 +148,17 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     /** Whether to use rule length in selecting ForEx++ rules */
     private boolean useRuleLength = true;
     
+    /** Store how many rules are actually found by the decision forest before we extract the ForEx++ rules. */
+    private int totalRulesFromClassifier = 0;
+        
+    /** Sort type: accuracy. */
     public static final int SORT_ACCURACY = 1;
+    /** Sort type: coverage. */
     public static final int SORT_COVERAGE = 2;
+    /** Sort type: rule length. */
     public static final int SORT_LENGTH = 3;
     
+    /** Tags for displaying sort types in the GUI. */
     public static final Tag[] TAGS_SORT = {
         new Tag(SORT_ACCURACY, "Sort by rule accuracy."),
         new Tag(SORT_COVERAGE, "Sort by rule coverage."),
@@ -159,6 +167,15 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     
     /** Sort Method for Displaying Rules */
     protected int sortType = SORT_ACCURACY;
+    
+    /** Enum for holding different build statuses */
+    enum BuildStatus {
+        BS_BUILT, BS_UNBUILT, BS_NOTCOMPATIBLE, BS_RANDOMFOREST_PRINT, 
+        BS_NOUSEFLAGS, BS_ONEATTRIBUTE
+    };
+    
+    /** The build status of this ForEx++ object */
+    private BuildStatus buildStatus = BuildStatus.BS_UNBUILT;
 
     /**
     * Default constructor.
@@ -186,7 +203,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      * 
      * <pre>
      * -P
-     *  Whether to print the SysFor that the ForEx++ rules were selected from
+     *  Whether to print the decision forest that the ForEx++ rules were selected from
      *  (default false)
      * </pre>
      * 
@@ -309,7 +326,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     }
 
     /**
-     * Builds and parses the SysFor to get the rules as specified by the ForEx++
+     * Builds and parses the decision forest to get the rules as specified by the ForEx++
      * algorithm.
      *
      * @param data - data with which to build the classifier
@@ -321,18 +338,38 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         getCapabilities().testWithFail(data);
         data = new Instances(data);
 
-        //ensure the classifier is a SysFor
-        if(m_Classifier.getClass().getName() != "weka.classifiers.trees.SysFor" ||
-           data.numAttributes() == 1 || //dataset with only one attribute
-           (!useAccuracy && !useCoverage && !useRuleLength) //invalid options
-        ) {
+        String classifierName = m_Classifier.getClass().getName();
+        
+        //ensure the classifier is a supported decision forest
+        if(classifierName != "weka.classifiers.trees.SysFor" &&
+           classifierName != "weka.classifiers.trees.ForestPA" &&
+           classifierName != "weka.classifiers.trees.RandomForest") {
+            buildStatus = BuildStatus.BS_NOTCOMPATIBLE;
+        }
+        if(data.numAttributes() == 1) { //dataset with only one attribute
+            buildStatus = BuildStatus.BS_ONEATTRIBUTE;
+        }
+        if(!useAccuracy && !useCoverage && !useRuleLength) { //invalid options 
+            buildStatus = BuildStatus.BS_NOUSEFLAGS;
+ 
+        }
+        
+        //ensure that if the classifier is RandomForest, the print flag is set
+        if(classifierName == "weka.classifiers.trees.RandomForest") {
+            RandomForest rf = (RandomForest)m_Classifier;
+            if(!rf.getPrintClassifiers()) {
+                buildStatus = BuildStatus.BS_RANDOMFOREST_PRINT;
+            }
+        }
+        
+        if(buildStatus != BuildStatus.BS_UNBUILT) {     
             J48 useless = new J48();
             useless.buildClassifier(data);
             m_Classifier = useless;
             return;
         }
         
-        //build SysFor
+        //build decision forest
         m_Classifier.buildClassifier(data);
 
         //get the proportion of records from each class
@@ -344,7 +381,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         
         //extract the rules as our Rule class    
         String ruleStrings = m_Classifier.toString();        
-        extractedRules = extractRulesFromRuleStrings(ruleStrings, data.numInstances(), data.classAttribute());
+        extractedRules = extractRulesFromRuleStrings(classifierName, ruleStrings, data.numInstances(), data.classAttribute());
+        totalRulesFromClassifier = extractedRules.getRules().size();
         
         //remove useless rules
         if(removeZeroCoverageRules) {
@@ -390,16 +428,60 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             finalRules = finalRules.merge(intersections[i]);
         }
         
+        buildStatus = BuildStatus.BS_BUILT;
+        
 
     }
     
+    /**
+     * Counts number of instances of substring in a string.
+     *
+     * @param toSearch - string to search for substring
+     * @param toFind - substring to find
+     * @return number of matches
+     */
     private int countMatches(String toSearch, String toFind) {
         
         return toSearch.length() - toSearch.replace(toFind, "").length();
         
     }
     
-    private RuleCollection extractRulesFromRuleStrings(String ruleStrings, int numRecords, Attribute classAttr) {
+    /**
+     * Take the output of the classifier and turn it into a RuleCollection
+     * object. This function simply redirects to the correct function for the
+     * specific classifier.
+     * 
+     * @param className - type of classifier used
+     * @param ruleStrings - output from the classifier
+     * @param numRecords - number of records in the dataset
+     * @param classAttr - the class attribute from the dataset
+     * @return collection of rules
+     */
+    private RuleCollection extractRulesFromRuleStrings(String className, String ruleStrings, int numRecords, Attribute classAttr) {
+        
+        switch(className) {
+            case "weka.classifiers.trees.SysFor":
+                return extractRulesFromRuleStringsSysFor(ruleStrings, numRecords, classAttr);
+            case "weka.classifiers.trees.RandomForest":
+                return extractRulesFromRuleStringsRandomForest(ruleStrings, numRecords, classAttr);
+            case "weka.classifiers.trees.ForestPA":
+                return extractRulesFromRuleStringsForestPA(ruleStrings, numRecords, classAttr);
+        }
+        
+        //default case that should never be run
+        return new RuleCollection(new HashSet<Rule>());
+        
+    }
+    
+     /**
+     * Take the output from a SysFor and turn it into a RuleCollection object.
+     * 
+     * @param ruleStrings - output from the classifier
+     * @param numRecords - number of records in the dataset
+     * @param classAttr - the class attribute from the dataset
+     * @return collection of rules
+     */
+    private RuleCollection extractRulesFromRuleStringsSysFor(String ruleStrings, int numRecords, Attribute classAttr) {
         
         HashSet<Rule> ruleVec = new HashSet<Rule>();
         String[] rules = ruleStrings.split("\n");
@@ -524,9 +606,241 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         return new RuleCollection(ruleVec);
         
     }
+    
+    /**
+     * Take the output from a ForestPA and turn it into a RuleCollection object.
+     * 
+     * @param ruleStrings - output from the classifier
+     * @param numRecords - number of records in the dataset
+     * @param classAttr - the class attribute from the dataset
+     * @return collection of rules
+     */
+    private RuleCollection extractRulesFromRuleStringsForestPA(String ruleStrings, int numRecords, Attribute classAttr) {
+        
+        HashSet<Rule> ruleVec = new HashSet<Rule>();
+        String[] rules = ruleStrings.split("\n");
+                
+        int numberOfLeaves = countMatches(ruleStrings, "/");
+        String[] leaves = new String[numberOfLeaves];
+        int leafIndex = 0;
+
+        for(int j = 0; j < rules.length; j++) {
+
+            String rule = rules[j];
+
+            if(rule.contains("/")) { //if we have a leaf
+                int numberOfPipes = countMatches(rule, "|  ");
+
+                //if we're at root, save rule and quit
+                if(numberOfPipes == 0) {
+                    leaves[leafIndex] = rule;
+                    leafIndex++;
+                    continue;
+                }
+
+                //we want to go up the tree and find the split points
+                for(int k = j - 1; k >= 0; k--) {
+
+                    String testerRule = rules[k];
+                    int testerRulePipes = countMatches(testerRule, "|  ");
+
+                    //continue if this is on the same level
+                    if(testerRulePipes == numberOfPipes) 
+                        continue;
+
+                    //we've found the parent split
+                    if(testerRulePipes < numberOfPipes ) {
+                        numberOfPipes = testerRulePipes;
+                        rule = testerRule + rule;
+
+                        //if we're at root, save rule and quit
+                        if(testerRulePipes == 0) {
+                            leaves[leafIndex] = rule.replaceAll("(\\|  )+", " && ");
+                            leafIndex++;
+                            break;
+                        }
+                    } //end if parent
+
+                } //end split point finder
+
+            }
+
+        }
+        
+        //we have string representations of all the rules, now to extract their information
+        String ruleRegex = "^(.+): ([a-zA-Z0-9-_!@#$%^*~'\"\\&]+)\\(([0-9.]+)(|/[0-9.]+)\\)";
+        Pattern regex = Pattern.compile(ruleRegex);
+        for(int i = 0; i < numberOfLeaves; i++) {
+            if(leaves[i] != null) {
+
+                Matcher matcher = regex.matcher(leaves[i]);
+                matcher.matches();
+                try {
+                    String ruleText = matcher.group(1);
+                    String classPredictedText = matcher.group(2);
+                    String recordsInLeafText = matcher.group(3);
+                    String misclassifiedText = matcher.group(4);
+
+                    //if there's no text there, then we have 100% accuracy in rule
+                    double misclassified = 0;
+                    if(!"".equals(misclassifiedText)) {
+                        misclassifiedText = misclassifiedText.replace("/", "");
+                        misclassified = Double.parseDouble(misclassifiedText);
+                    }
+
+                    //accuracy is calculated by (support - misclassification) / number of rules in leaf
+                    double recordsInLeaf = Double.parseDouble(recordsInLeafText);
+                    double accuracy = 0;
+                    if (recordsInLeaf != 0) {
+                        accuracy = (recordsInLeaf - misclassified) / (recordsInLeaf);
+                    }
+
+                    //support is expressed as a fraction of the whole dataset
+                    double support = recordsInLeaf / numRecords;
+
+                    //rule length can be grabbed by counting number of &&s
+                    int ruleLength = ruleText.split("&&").length + 1;
+
+                    //identify the class index
+                    int predictedClass = classAttr.indexOfValue(classPredictedText);
+
+                    //class distribution formatting
+                    double[] classDistribution = null;
+
+                    //set up the rule and add it to the vector
+                    Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
+                            predictedClass, classPredictedText, classDistribution, sortType);
+                    ruleVec.add(theRule);
+                }
+                catch(Exception e) {
+                    System.out.println(leaves[i]);
+                }
+            }
+        }
+        
+        
+        return new RuleCollection(ruleVec);
+        
+    }
+    
+    /**
+     * Take the output from a RandomForest and turn it into a RuleCollection object.
+     * 
+     * @param ruleStrings - output from the classifier
+     * @param numRecords - number of records in the dataset
+     * @param classAttr - the class attribute from the dataset
+     * @return collection of rules
+     */
+    private RuleCollection extractRulesFromRuleStringsRandomForest(String ruleStrings, int numRecords, Attribute classAttr) {
+        
+        HashSet<Rule> ruleVec = new HashSet<Rule>();
+        String[] rules = ruleStrings.split("\n");
+                
+        int numberOfLeaves = countMatches(ruleStrings, "(");
+        String[] leaves = new String[numberOfLeaves];
+        int leafIndex = 0;
+
+        for(int j = 0; j < rules.length; j++) {
+
+            String rule = rules[j];
+
+            if(rule.contains("(")) { //if we have a leaf
+                int numberOfPipes = countMatches(rule, "|");
+
+                //if we're at root, save rule and quit
+                if(numberOfPipes == 0) {
+                    leaves[leafIndex] = rule;
+                    leafIndex++;
+                    continue;
+                }
+
+                //we want to go up the tree and find the split points
+                for(int k = j - 1; k >= 0; k--) {
+
+                    String testerRule = rules[k];
+                    int testerRulePipes = countMatches(testerRule, "|");
+
+                    //continue if this is on the same level
+                    if(testerRulePipes == numberOfPipes) 
+                        continue;
+
+                    //we've found the parent split
+                    if(testerRulePipes < numberOfPipes ) {
+                        numberOfPipes = testerRulePipes;
+                        rule = testerRule + rule;
+
+                        //if we're at root, save rule and quit
+                        if(testerRulePipes == 0) {
+                            leaves[leafIndex] = rule.replaceAll("(\\|   )+", " && ");
+                            leafIndex++;
+                            break;
+                        }
+                    } //end if parent
+
+                } //end split point finder
+
+            }
+
+        }
+        
+        //we have string representations of all the rules, now to extract their information
+        String ruleRegex = "^(.+) : ([a-zA-Z0-9-_!@#$%^*~'\"\\&]+) \\(([0-9.]+)(|/[0-9.]+)\\)";
+        Pattern regex = Pattern.compile(ruleRegex);
+        for(int i = 0; i < numberOfLeaves; i++) {
+            if(leaves[i] != null) {
+
+                Matcher matcher = regex.matcher(leaves[i]);
+                matcher.matches();
+                try {
+                    String ruleText = matcher.group(1);
+                    String classPredictedText = matcher.group(2);
+                    String recordsInLeafText = matcher.group(3);
+                    String misclassifiedText = matcher.group(4);
+
+                    //if there's no text there, then we have 100% accuracy in rule
+                    double misclassified = 0;
+                    if(!"".equals(misclassifiedText)) {
+                        misclassifiedText = misclassifiedText.replace("/", "");
+                        misclassified = Double.parseDouble(misclassifiedText);
+                    }
+
+                    //accuracy is calculated by (support - misclassification) / number of rules in leaf
+                    double recordsInLeaf = Double.parseDouble(recordsInLeafText);
+                    double accuracy = 0;
+                    if (recordsInLeaf != 0) {
+                        accuracy = (recordsInLeaf - misclassified) / (recordsInLeaf);
+                    }
+
+                    //support is expressed as a fraction of the whole dataset
+                    double support = recordsInLeaf / numRecords;
+
+                    //rule length can be grabbed by counting number of &&s
+                    int ruleLength = ruleText.split("&&").length + 1;
+
+                    //identify the class index
+                    int predictedClass = classAttr.indexOfValue(classPredictedText);
+
+                    //class distribution formatting
+                    double[] classDistribution = null;
+
+                    //set up the rule and add it to the vector
+                    Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
+                            predictedClass, classPredictedText, classDistribution, sortType);
+                    ruleVec.add(theRule);
+                }
+                catch(Exception e) {
+                    System.out.println(leaves[i]);
+                }
+            }
+        }
+        
+        
+        return new RuleCollection(ruleVec);
+        
+    }
 
     /**
-     * Passes the classification through to the built SysFor
+     * Passes the classification through to the built decision forest
      *
      * @param instance - the instance to be classified
      * @return probablity distribution for this instance's classification
@@ -619,7 +933,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     @Override
     public String toString() {
 
-        if (finalRules != null) {
+        String outString = "";
+        if (buildStatus == BuildStatus.BS_BUILT) {
              
             StringBuilder out = new StringBuilder("");
             out.append(finalRules.toString(groupRulesViaClassValue));
@@ -628,18 +943,26 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                 out.append("\n").append(m_Classifier.toString());
             }
         
-            return out.toString();
+            outString = out.toString();
         }
         else {
-            if(!useAccuracy && !useCoverage && ! useRuleLength) {
-                return "ForEx++ not built!\nSelect at least one criteria by "
-                        + "which to select rules (accuracy, coverage, or rule "
-                        + "length).";
+            if(buildStatus == BuildStatus.BS_NOUSEFLAGS) {
+                outString = "ForEx++ not built!\nSelect at least one criteria by "
+                            + "which to select rules (accuracy, coverage, or rule "
+                            + "length).";
             }
-            else {
-                return "ForEx++ not built!\nWeka ForEx++ can currently only parse SysFor.";
+            else if(buildStatus == BuildStatus.BS_RANDOMFOREST_PRINT) {
+                outString = "ForEx++ not built!\nRandomForest must have printClassifiers set to true (-print).";
+            }
+            else if(buildStatus == BuildStatus.BS_NOTCOMPATIBLE) {
+                outString = "ForEx++ not built!\nWeka ForEx++ can currently only parse RandomForest, SysFor or ForestPA.";
+            }
+            else if(buildStatus == BuildStatus.BS_ONEATTRIBUTE) {
+                outString = "ForEx++ not built!\nUse a dataset with more than one attribute.";
             }
         }
+        
+        return outString;
 
     }
 
@@ -651,7 +974,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     public Enumeration<Option> listOptions() {
 
         Vector<Option> newVector = new Vector<Option>();
-        newVector.addElement(new Option("\tWhether to print the SysFor that the "
+        newVector.addElement(new Option("\tWhether to print the decision forest that the "
                 + "ForEx++ rules were selected from.\n"
                 + "\t(default false)", "P", 0, "-P"));
         newVector.addElement(new Option("\tWhether to remove rules with no coverage"
@@ -678,19 +1001,42 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         return newVector.elements();
     }
     
+    /**
+     * Inner class for representing a rule and the stats associated with it.
+     */
     private class Rule implements Serializable, Comparable {
 
+        /** For serialization. */
         private static final long serialVersionUID = -5891208000957072995L;
 
+        /** The text of the rule. */
         private final String ruleText;
+        /** Rule accuracy */
         private final double accuracy;
+        /** Rule coverage */
         private final double coverage;
+        /** Rule length */
         private final int length;
+        /** Which class is predicted (as index to class attribute) */
         private final int predictedClass;
+        /** Which class is predicted (as text) */
         private final String predictedClassLabel;
+        /** Optional distribution of the classes in the leaf. */
         private final double[] classDistribution;
+        /** What to compare if you sort this rule. */
         private final int sortMethod;
         
+        /**
+         * The constructor for the Rule.
+         * @param ruleText - The text of the rule
+         * @param accuracy - Rule accuracy
+         * @param coverage - Rule coverage
+         * @param length - Rule length
+         * @param predictedClass - Which class is predicted (as index to class attribute)
+         * @param predictedClassLabel - Which class is predicted (as text)
+         * @param classDistribution - Optional distribution of the classes in the leaf
+         * @param sortMethod - What to compare if you sort this rule
+         */
         public Rule(String ruleText, double accuracy, double coverage, int length,
                     int predictedClass, String predictedClassLabel, double[] classDistribution,
                     int sortMethod) {
@@ -704,34 +1050,66 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             this.sortMethod = sortMethod;
         }
         
+        /**
+         * Returns rule text.
+         * @return rule text
+         */
         public String getRuleText() {
             return ruleText;
         }
         
+        /**
+         * Return rule accuracy.
+         * @return rule accuracy
+         */
         public double getAccuracy() {
             return Math.round(accuracy*100000.0)/100000.0;
         }
         
+        /**
+         * Return rule coverage
+         * @return rule coverage
+         */
         public double getCoverage() {
             return Math.round(coverage*100000.0)/100000.0;
         }
         
+        /**
+         * Return rule length
+         * @return rule length
+         */
         public int getLength() {
             return length;
         }
         
+        /**
+         * Return predicted class index.
+         * @return predicted class index
+         */
         public int getPredictedClassIndex() {
             return predictedClass;
         }
         
+        /**
+         * Return predicted class label.
+         * @return predicted class label
+         */
         public String getPredictedClassLabel() {
             return predictedClassLabel;
         }
         
+        /**
+         * Return class distribution for leaf.
+         * @return class distribution for leaf
+         */
         public double[] getClassDistribution() {
             return classDistribution;
         }
         
+        /**
+         * Return string representation of rule.
+         * @return string representation of rule
+         */
         @Override
         public String toString() {
             StringBuilder outString = new StringBuilder(ruleText).append(": ")
@@ -744,6 +1122,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return outString.toString();
         }
 
+        /**
+         * Compare with anothre rule based on sortMethod.
+         * @param o - rule to compare this to.
+         * @return 1 if sort value is higher, -1 if it's lower, 0 if their the same.
+         */
         @Override
         public int compareTo(Object o) {
             
@@ -758,16 +1141,16 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                 else
                     return 0;
             case SORT_COVERAGE:
-                if(coverage > other.getAccuracy())
+                if(coverage > other.getCoverage())
                     return 1;
-                else if(coverage < other.getAccuracy())
+                else if(coverage < other.getCoverage())
                     return -1;
                 else
                     return 0;
             case SORT_LENGTH:
-                if(length > other.getAccuracy())
+                if(length > other.getLength())
                     return 1;
-                else if(length < other.getAccuracy())
+                else if(length < other.getLength())
                     return -1;
                 else
                     return 0;
@@ -779,21 +1162,37 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         
     }
     
-     private class RuleCollection implements Serializable {
+    /**
+     * Inner class for a collection of rules.
+     */
+    private class RuleCollection implements Serializable {
          
+        /** For serialization. */
         private static final long serialVersionUID = -5891208009570723995L;
 
-         
+        /** The set of rules. */
         private final HashSet<Rule> rules;
 
+        /**
+         * The constructor.
+         * @param rules - the set of rules.
+         */
         public RuleCollection(HashSet<Rule> rules) {
             this.rules = rules;
         }
         
+        /**
+         * Get the set of rules.
+         * @return the set of rules.
+         */
         public HashSet<Rule> getRules() {
             return rules;
         }
         
+        /**
+         * Get the mean accuracy for the rules in the set.
+         * @return mean accuracy for the rules in the set
+         */
         public double meanAccuracy() {
             
             double mean = 0;
@@ -809,6 +1208,10 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
+        /**
+         * Get the mean coverage for the rules in the set.
+         * @return mean coverage for the rules in the set
+         */
         public double meanCoverage() {
             
             double mean = 0;
@@ -823,6 +1226,10 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
+        /**
+         * Get the mean rule length for the rules in the set.
+         * @return mean rule length for the rules in the set
+         */
         public double meanRuleLength() {
             
             double mean = 0;
@@ -837,6 +1244,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
+        /**
+         * Get a subset of rules with accuracy greater-than or equal-to a threshold.
+         * @param accuracy - threshold above or equal to which rules will be selected.
+         * @return subset of rules with accuracy greater-than or equal-to "accuracy" param.
+         */
         public RuleCollection getRulesGEQAccuracy(double accuracy) {
             
             HashSet<Rule> newRules = new HashSet<Rule>();
@@ -850,6 +1262,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return new RuleCollection(newRules);
         }
         
+        /**
+         * Get a subset of rules with coverage greater-than or equal-to a threshold.
+         * @param coverage - threshold above or equal to which rules will be selected.
+         * @return subset of rules with coverage greater-than or equal-to "coverage" param.
+         */
         public RuleCollection getRulesGEQCoverage(double coverage) {
             
             HashSet<Rule> newRules = new HashSet<Rule>();
@@ -863,6 +1280,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return new RuleCollection(newRules);
         }
         
+        /**
+         * Get a subset of rules with length less-than or equal-to a threshold.
+         * @param length - threshold above or equal to which rules will be selected.
+         * @return subset of rules with length less-than or equal-to "length" param.
+         */
         public RuleCollection getRulesLEQLength(double length) {
             
             HashSet<Rule> newRules = new HashSet<Rule>();
@@ -876,6 +1298,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return new RuleCollection(newRules);
         }
         
+        /**
+         * Merge the rules from two RuleCollections and return a new RuleCollection object.
+         * @param otherRules - the RuleCollection to merge with this one.
+         * @return new RuleCollection with rules from this RuleCollection and otherRules.
+         */
         public RuleCollection merge(RuleCollection otherRules) {
             
             HashSet<Rule> newRuleSet = new HashSet<Rule>();
@@ -888,6 +1315,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
+        /**
+         * Get the subset of rules for a particular class.
+         * @param classIndex - which class to extract
+         * @return a RuleCollection with only rules from classIndex.
+         */
         public RuleCollection getRulesByClass(int classIndex) {
             HashSet<Rule> newRules = new HashSet<Rule>();
             
@@ -900,6 +1332,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return new RuleCollection(newRules);
         }
         
+        /**
+         * the intersection of this rule set and another rule set. 
+         * @param otherRules - the RuleCollection to intersect with this one.
+         * @return the intersection of this rule set and otherRules' rule set.
+         */
         public RuleCollection intersection(RuleCollection otherRules) {
             
             HashSet<Rule> newRuleSet = new HashSet<Rule>(rules);
@@ -909,9 +1346,20 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
         }
         
+        /**
+         * Get a string representation of the RuleCollection with some added 
+         * information on which classifier was used and how many rules were found.
+         * @param group - whether to group the output by class value.
+         * @return string representing the set of rules, with some added information.
+         */
         public String toString(boolean group) {
             
-            StringBuilder out = new StringBuilder("ForEx++ Rules:\n");
+            int numExtracted = rules.size();
+            
+            StringBuilder out = new StringBuilder("There were a total of ");
+            out.append(totalRulesFromClassifier).append(" found by the ");
+            out.append(m_Classifier.getClass().getName()).append(" classifier.\n");
+            out.append(numExtracted).append(" ForEx++ Rules Discovered:\n\n");
             
             if(!group) {
                 
@@ -944,7 +1392,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                 //iterate over these classes individually and add to the output
                 for(String k : classMap.keySet()) {
                     
-                    out.append("Rules for class value ").append(k).append(": \n");
+                    out.append("Rules for class value ").append(k).append(" (")
+                            .append(classMap.get(k).size()).append(" found): \n");
                     
                     Collections.sort(classMap.get(k), Collections.reverseOrder());
                     
@@ -963,6 +1412,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             return out.toString();
         }
         
+        /**
+         * Return the string representation of the RuleCollection without grouping.
+         * @return string representing the set of rules, with some added information.
+         * @see RuleCollection#toString(boolean) 
+         */
         @Override
         public String toString() {
             return toString(false);
@@ -993,7 +1447,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      * @return tip text for this option
      */
     public String printClassifierTipText() {
-        return "Whether to print the SysFor that the ForEx++ rules were selected from.";
+        return "Whether to print the decision forest that the ForEx++ rules were selected from.";
     }
     
     /**
