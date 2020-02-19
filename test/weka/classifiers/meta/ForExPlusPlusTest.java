@@ -27,8 +27,8 @@ import junit.framework.TestSuite;
 import weka.classifiers.meta.ForExPlusPlus;
 
 /**
- * Tests SysFor. Run from the command line with:<p/>
- * java weka.classifiers.trees.SysFor
+ * Tests ForExPlusPlusTest. Run from the command line with:<p/>
+ * java weka.classifiers.trees.ForExPlusPlusTest
  *
  * @author Michael Furner (mfurner at csu dot edu dot au)
  * @version 1.0

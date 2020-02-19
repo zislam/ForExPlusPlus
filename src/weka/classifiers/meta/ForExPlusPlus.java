@@ -31,6 +31,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Vector;
+import java.util.Arrays;
 
 //import weka.associations.gsp.Element;
 import weka.classifiers.SingleClassifierEnhancer;
@@ -151,18 +152,18 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
     /** Store how many rules are actually found by the decision forest before we extract the ForEx++ rules. */
     private int totalRulesFromClassifier = 0;
         
-    /** Sort type: accuracy. */
+    /** Sort type: accuracy (highest accuracy first). */
     public static final int SORT_ACCURACY = 1;
-    /** Sort type: coverage. */
+    /** Sort type: coverage (highest coverage first). */
     public static final int SORT_COVERAGE = 2;
-    /** Sort type: rule length. */
+    /** Sort type: rule length (shortest first). */
     public static final int SORT_LENGTH = 3;
     
     /** Tags for displaying sort types in the GUI. */
     public static final Tag[] TAGS_SORT = {
-        new Tag(SORT_ACCURACY, "Sort by rule accuracy."),
-        new Tag(SORT_COVERAGE, "Sort by rule coverage."),
-        new Tag(SORT_LENGTH, "Sort by rule length.")
+        new Tag(SORT_ACCURACY, "Sort by rule accuracy (highest accuracy first)."),
+        new Tag(SORT_COVERAGE, "Sort by rule coverage (highest coverage first)."),
+        new Tag(SORT_LENGTH, "Sort by rule length (shortest first).")
     };
     
     /** Sort Method for Displaying Rules */
@@ -483,13 +484,13 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      */
     private RuleCollection extractRulesFromRuleStringsSysFor(String ruleStrings, int numRecords, Attribute classAttr) {
         
-        HashSet<Rule> ruleVec = new HashSet<Rule>();
+        HashSet<Rule> ruleMap = new HashSet<Rule>();
         String[] rules = ruleStrings.split("\n");
                 
         int numberOfLeaves = countMatches(ruleStrings, "(");
         String[] leaves = new String[numberOfLeaves];
         int leafIndex = 0;
-
+        
         for(int j = 0; j < rules.length; j++) {
 
             String rule = rules[j];
@@ -557,6 +558,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
 
                     //accuracy is calculated by (support - misclassification) / number of rules in leaf
                     double recordsInLeaf = Double.parseDouble(recordsInLeafText);
+
                     double accuracy = 0;
                     if (recordsInLeaf != 0) {
                         accuracy = (recordsInLeaf - misclassified) / (recordsInLeaf);
@@ -566,7 +568,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                     double support = recordsInLeaf / numRecords;
 
                     //rule length can be grabbed by counting number of &&s
-                    int ruleLength = ruleText.split("&&").length + 1;
+                    int ruleLength = ruleText.split("&&").length;
 
                     //identify the class index
                     int predictedClass = classAttr.indexOfValue(classPredictedText);
@@ -590,11 +592,12 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
 
                         }
                     }
-
+            
                     //set up the rule and add it to the vector
-                    Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
+                    Rule theRule = new Rule(ruleText, accuracy, support, recordsInLeaf, ruleLength,
                             predictedClass, classPredictedText, classDistribution, sortType);
-                    ruleVec.add(theRule);
+
+                    ruleMap.add(theRule);
                 }
                 catch(Exception e) {
                     System.out.println(leaves[i]);
@@ -603,7 +606,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         
-        return new RuleCollection(ruleVec);
+        return new RuleCollection(ruleMap);
         
     }
     
@@ -708,7 +711,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                     double[] classDistribution = null;
 
                     //set up the rule and add it to the vector
-                    Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
+                    Rule theRule = new Rule(ruleText, accuracy, support, recordsInLeaf, ruleLength,
                             predictedClass, classPredictedText, classDistribution, sortType);
                     ruleVec.add(theRule);
                 }
@@ -733,7 +736,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      */
     private RuleCollection extractRulesFromRuleStringsRandomForest(String ruleStrings, int numRecords, Attribute classAttr) {
         
-        HashSet<Rule> ruleVec = new HashSet<Rule>();
+        HashSet<Rule> ruleMap = new HashSet<Rule>();
         String[] rules = ruleStrings.split("\n");
                 
         int numberOfLeaves = countMatches(ruleStrings, "(");
@@ -824,9 +827,9 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                     double[] classDistribution = null;
 
                     //set up the rule and add it to the vector
-                    Rule theRule = new Rule(ruleText, accuracy, support, ruleLength,
+                    Rule theRule = new Rule(ruleText, accuracy, support, recordsInLeaf, ruleLength,
                             predictedClass, classPredictedText, classDistribution, sortType);
-                    ruleVec.add(theRule);
+                    ruleMap.add(theRule);
                 }
                 catch(Exception e) {
                     System.out.println(leaves[i]);
@@ -835,7 +838,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         
-        return new RuleCollection(ruleVec);
+        return new RuleCollection(ruleMap);
         
     }
 
@@ -900,7 +903,13 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      * explorer/experimenter
      */
     public String globalInfo() {
-        return "For more information, see:\n\n" + getTechnicalInformation().toString();
+        return "Metaclassifier implementing ForEx++: \"A New Framework for "
+                + "Knowledge Discovery from Decision Forests\" for SysFor, "
+                + "RandomForest and ForestPA.\n"
+                + "Selects rules with a higher-than-average accuracy and "
+                + "coverage and a shorter-than-average rule length.\n\n"
+                + "For more information, see:\n" 
+                + getTechnicalInformation().toString();
     }
 
     /**
@@ -1015,6 +1024,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         private final double accuracy;
         /** Rule coverage */
         private final double coverage;
+        /** Actual number of records that fall in this leaf */
+        private final double numRecordsInLeaf;
         /** Rule length */
         private final int length;
         /** Which class is predicted (as index to class attribute) */
@@ -1031,18 +1042,20 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
          * @param ruleText - The text of the rule
          * @param accuracy - Rule accuracy
          * @param coverage - Rule coverage
+         * @param numRecordsInLeaf - Actual number of records that fall in this leaf
          * @param length - Rule length
          * @param predictedClass - Which class is predicted (as index to class attribute)
          * @param predictedClassLabel - Which class is predicted (as text)
          * @param classDistribution - Optional distribution of the classes in the leaf
          * @param sortMethod - What to compare if you sort this rule
          */
-        public Rule(String ruleText, double accuracy, double coverage, int length,
+        public Rule(String ruleText, double accuracy, double coverage, double numRecordsInLeaf, int length,
                     int predictedClass, String predictedClassLabel, double[] classDistribution,
                     int sortMethod) {
             this.ruleText = ruleText;
             this.accuracy = accuracy;
             this.coverage = coverage;
+            this.numRecordsInLeaf = numRecordsInLeaf;
             this.length = length;
             this.predictedClass = predictedClass;
             this.predictedClassLabel = predictedClassLabel;
@@ -1063,7 +1076,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
          * @return rule accuracy
          */
         public double getAccuracy() {
-            return Math.round(accuracy*100000.0)/100000.0;
+            //return Math.round(accuracy*100000.0)/100000.0;
+            return accuracy;
         }
         
         /**
@@ -1071,7 +1085,8 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
          * @return rule coverage
          */
         public double getCoverage() {
-            return Math.round(coverage*100000.0)/100000.0;
+            //return Math.round(coverage*100000.0)/100000.0;
+            return coverage;
         }
         
         /**
@@ -1080,6 +1095,14 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
          */
         public int getLength() {
             return length;
+        }
+        
+        /**
+         * Return Records in leaf
+         * @return numRecordsInLeaf
+         */
+        public double getNumRecordsInLeaf() {
+            return numRecordsInLeaf;
         }
         
         /**
@@ -1117,6 +1140,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             outString.append(". Confidence: ").append(String.format("%.3f", accuracy))
                     .append("; Coverage: ").append(String.format("%.3f", coverage))
+                    .append(" (").append(String.format("%.0f", numRecordsInLeaf)).append(" records)")
                     .append(";");
             
             return outString.toString();
@@ -1158,6 +1182,50 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             
             return 0;
             
+        }
+        
+        /**
+         * Compare this rule with another.
+         * @param object - the object we are comparing this Rule to.
+         * @return whether this rule is the same as the other object
+         */
+        @Override
+        public boolean equals(Object object) {         
+            
+            boolean equal = false;
+           
+            if( object instanceof Rule ) {
+                 
+                double dAccuracy = Math.abs(this.accuracy - ((Rule) object).getAccuracy());
+                double dCoverage = Math.abs(this.coverage - ((Rule) object).getCoverage());
+                if(dAccuracy <= 0.001 && dCoverage <= 0.001 && this.length == ((Rule) object).getLength()){
+                    equal = true;
+                }
+                
+            }
+                        
+            return equal;
+            
+        }
+        
+        /**
+         * Generate a hashcode for this Rule
+         * @return hashcode for this Rule
+         */
+        @Override
+        public int hashCode() {
+            int hash = 31;
+            hash *= accuracy;
+            hash *= length;
+            hash *= numRecordsInLeaf;
+            
+            //test with ordered string hash
+            char[] temp = ruleText.toCharArray();
+            Arrays.sort(temp);
+            String tempStr = new String(temp);
+            hash *= tempStr.hashCode();
+            
+            return hash;
         }
         
     }
@@ -1357,7 +1425,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
             int numExtracted = rules.size();
             
             StringBuilder out = new StringBuilder("There were a total of ");
-            out.append(totalRulesFromClassifier).append(" found by the ");
+            out.append(totalRulesFromClassifier).append(" rules found by the ");
             out.append(m_Classifier.getClass().getName()).append(" classifier.\n");
             out.append(numExtracted).append(" ForEx++ Rules Discovered:\n\n");
             
@@ -1395,7 +1463,11 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
                     out.append("Rules for class value ").append(k).append(" (")
                             .append(classMap.get(k).size()).append(" found): \n");
                     
-                    Collections.sort(classMap.get(k), Collections.reverseOrder());
+                    if(sortType == SORT_LENGTH) {
+                        Collections.sort(classMap.get(k));
+                    }
+                    else
+                        Collections.sort(classMap.get(k), Collections.reverseOrder());
                     
                     for (Rule rule : classMap.get(k)) {
                         
@@ -1440,6 +1512,15 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
      */
     public void setPrintClassifier(boolean printClassifier) {
         this.printClassifier = printClassifier;
+    }
+    
+    /**
+     * Return tip text for this option
+     * @return tip text for this option
+     */
+    @Override
+    public String classifierTipText() {
+        return "Either SysFor, RandomForest or ForestPA.";
     }
     
     /**
