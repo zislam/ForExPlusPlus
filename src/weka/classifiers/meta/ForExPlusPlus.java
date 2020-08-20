@@ -535,7 +535,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         //we have string representations of all the rules, now to extract their information
-        String ruleRegex = "^(.+): ([a-zA-Z0-9-_!@#$%^*~'\"\\&]+)(| \\{[a-zA-Z0-9;,-_!@#$%^*~'\"\\&]+\\}) \\(([0-9.]+)(|/[0-9.]+)\\)";
+        String ruleRegex = "^(.+): ([a-zA-Z0-9-_!@#><=$%^*~'\"\\&]+)(| \\{[a-zA-Z0-9;,-_!@#><=$%^*~'\"\\&]+\\}) \\(([0-9.]+)(|/[0-9.]+)\\)";
         Pattern regex = Pattern.compile(ruleRegex);
         for(int i = 0; i < numberOfLeaves; i++) {
             if(leaves[i] != null) {
@@ -671,7 +671,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         //we have string representations of all the rules, now to extract their information
-        String ruleRegex = "^(.+): ([a-zA-Z0-9-_!@#$%^*~'\"\\&]+)\\(([0-9.]+)(|/[0-9.]+)\\)";
+        String ruleRegex = "^(.+): ([a-zA-Z0-9;,-_!@#><=$%^*~'\"\\&]+)\\(([0-9.]+)(|/[0-9.]+)\\)";
         Pattern regex = Pattern.compile(ruleRegex);
         for(int i = 0; i < numberOfLeaves; i++) {
             if(leaves[i] != null) {
@@ -787,7 +787,7 @@ public class ForExPlusPlus extends SingleClassifierEnhancer {
         }
         
         //we have string representations of all the rules, now to extract their information
-        String ruleRegex = "^(.+) : ([a-zA-Z0-9-_!@#$%^*~'\"\\&]+) \\(([0-9.]+)(|/[0-9.]+)\\)";
+        String ruleRegex = "^(.+) : ([a-zA-Z0-9;,-_!@#><=$%^*~'\"\\&]+) \\(([0-9.]+)(|/[0-9.]+)\\)";
         Pattern regex = Pattern.compile(ruleRegex);
         for(int i = 0; i < numberOfLeaves; i++) {
             if(leaves[i] != null) {
